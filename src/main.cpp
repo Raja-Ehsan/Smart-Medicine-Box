@@ -6,6 +6,7 @@
 #define Timeout 20000
 
 String time_str;
+int ir=19;
 
 //ntpserver to get time and date without use of any external module
 const char* ntpServer = "pool.ntp.org";
@@ -28,7 +29,7 @@ void connect_wifi(){
   if(WiFi.status()!= WL_CONNECTED)
   {
     Serial.print("Failed");
-    //take any action
+    //take any action::::will add resetting automatically option later
   }
   else
   {
@@ -69,9 +70,26 @@ void setup(){
    WiFi.mode(WIFI_OFF);
 }
 
+//function to check whether current time is equal to specified alarm time
+bool checktime(){
+  //giving flexibility of around 3 seconds
+  if(printLocalTime()=="16:02:00" || printLocalTime()=="16:02:01" ||printLocalTime()=="16:02:03" )
+  return true;
+  else return false;
+}
 
+//function to start alarm::::no buzzer for now just using an LED in place
+void alarm(){
+
+    digitalWrite(18,HIGH);
+    //also not turning off led will do it next
+}
 void loop() {
-  //displays time after every seconds
   delay(1000);
       Serial.println(printLocalTime());
+      //if check time return true if time matches then alarm
+  if(checktime())
+  {
+  alarm();
+  }
 }
