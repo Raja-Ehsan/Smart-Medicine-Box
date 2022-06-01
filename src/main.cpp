@@ -1,3 +1,5 @@
+
+
 //----------Included Libraries---------
 #include <Arduino.h>
 #include "WiFi.h"
@@ -6,6 +8,15 @@
 #include <AsyncTCP.h>
 #include <ESP_Mail_Client.h>//Libaray that allows to send mail from ESP32 using your gmaill account
 #include <Firebase_ESP_Client.h>//For Firebase connection with ESP-32
+#include <LiquidCrystal_I2C.h>
+
+// set the LCD number of columns and rows
+int lcdColumns = 16;
+int lcdRows = 2;
+
+// set LCD address, number of columns and rows
+// if you don't know your display address, run an I2C scanner sketch
+LiquidCrystal_I2C lcd(0x27, lcdColumns, lcdRows);  
 
 
 //-------tokens-------
@@ -45,7 +56,11 @@ SMTPSession smtp;/* The SMTP Session object used for Email sending */
 String date_str;
 String time_str;
 int ir = 19;
-string alrm="";//global string variable to store alarm that is to store at firebase
+int remaining_days=30;
+String month1="";
+String day1="";
+String year1="";
+String alrm="";//global string variable to store alarm that is to store at firebase
 
 //--------array to store alarm--------
 String alarm1[3] = {"00:00:00","00:00:00","00:00:00"};
@@ -79,11 +94,17 @@ void alarm(int a);
 //main setup function
 void setup()
 {
-  int remaining_days=30;
   Serial.begin(115200);
   pinMode(18, OUTPUT);  
-  pinMode(22, OUTPUT);
+  pinMode(15, OUTPUT);
   pinMode(ir, INPUT);
+  // initialize LCD
+  lcd.begin();
+  // turn on LCD backlight                      
+  lcd.backlight();
+  // set cursor to first column, first row
+  lcd.setCursor(1,1);
+
   connect_wifi();
   // init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
@@ -95,6 +116,7 @@ void setup()
   config.database_url = DATABASE_URL;
   auth.user.email=USER_EMAIL;
   auth.user.password=USER_PASSWORD;
+  
   fbdo.setResponseSize(4096);
   Firebase.reconnectWiFi(true);
   /* Assign the callback function for the long running token generation task */
@@ -125,8 +147,25 @@ void setup()
 //main loop function
 void loop()
 {
+  //if wifi disconnected during functionning reconnect it again
+  if ((WiFi.status() != WL_CONNECTED)) 
+  {
+    Serial.println("Reconnecting to WiFi...");
+    WiFi.disconnect();
+    WiFi.reconnect();
+    if ((WiFi.status() == WL_CONNECTED))
+    {
+      Serial.print("Camera Ready! Use 'http://");
+      Serial.print(WiFi.localIP());
+      Serial.println("' to connect");
+    }
+    delay(3000);
+  }
   delay(1000);
-  Serial.println(printLocalTime());
+  lcd.clear();
+  // set cursor to first column, second row
+  lcd.print(printLocalTime());
+//  Serial.println();
   if (checktime()=="alarm1")
   {
     alarm(1);
@@ -137,11 +176,14 @@ void loop()
   }
   else if ((digitalRead(ir)==HIGH))
   {
-    digitalWrite(22,HIGH);
+    digitalWrite(15,HIGH);
     delay(500);
-    digitalWrite(22,LOW);
-    Serial.print("Not now");
+    digitalWrite(15,LOW);
+    lcd.clear();
+    lcd.print("Not now");
   }
+
+reconnectwifi();
 }
 
 String printLocalTime()
@@ -158,16 +200,31 @@ String printLocalTime()
   return String(output);
 }
 
+
 String printdate()
 {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo))
   {
     Serial.println("Failed to obtain date");
+//    ESP.restart();
     return "Date Error";
   }
   char output[80];
+  char month[10];
+  char day[10];
+  char year[10];
+  
   strftime(output, 80, "%B %d %Y", &timeinfo);
+  strftime(month, 10, "%B", &timeinfo);
+  strftime(day, 10, "%d", &timeinfo);
+  strftime(year, 10, "%Y", &timeinfo);
+  month1 = String(month);
+  day1 = String(day);
+  int day11=day1.toInt();
+  day11--;
+  day1 =  String(day11);
+  year1= String(year);
   date_str = String(output);
   return String(output);
 }
@@ -226,16 +283,19 @@ void firebase_trigger(int a,bool status,String stats="")
       }
     
     }
-     if(flag==false)
+    Serial.println(month1+" "+day1+" "+year1);
+     if(flag==true)
      {
-      Firebase.RTDB.setInt(&fbdo, "ESP-data/"+printdate()+"/remainingdays",remaining_days);
-      Firebase.RTDB.getInt(&fbdo, "ESP-data/"+printdate()+"/remainingdays");
+      flag=false;
+     }
+     else if(flag==false)
+     {
+      Firebase.RTDB.getInt(&fbdo, "ESP-data/"+month1+" "+day1+" "+year1+"/remainingdays");
       remaining_days = fbdo.intData();
       remaining_days--;
+      Firebase.RTDB.setInt(&fbdo, "ESP-data/"+printdate()+"/remainingdays",remaining_days);
       flag=true;
-     }
-     else if(flag==true)
-      flag=false;
+      }
  }
 }
 void alarm(int a)
@@ -244,6 +304,7 @@ void alarm(int a)
   int time=millis();
   while (digitalRead(ir) == LOW && millis()-time<= 20000)
   {
+    lcd.print("Its Time");
     digitalWrite(18, HIGH);
     delay(1000);
 
@@ -257,22 +318,24 @@ void alarm(int a)
     if(millis()-time<10000)
     {
       firebase_trigger(a,false);
-      sendMail("Taken......Good....Pill taken on time :::::::: Remaining Days: "+remaining_days);
-      Serial.print("Taken early");
+      lcd.clear();
+      sendMail("Pill Taken on Time");
+      lcd.print("Taken early");
     }
     else 
     {
       firebase_trigger(a,true);
-      sendMail("Taken.....You were late::::::::Remaining Days: "+remaining_days);
-      Serial.print("Taken late");
+      sendMail("Pill Taken but you are late.");
+      lcd.clear();
+      lcd.print("Taken late");
     }
   }
   else
   {
-    
-    firebase_trigger(3,true,"missed");
-    sendMail("Missed.....now wait till the next alarm::::::::::Remaining Days: "+remaining_days);
-    Serial.print("You were very late");  
+    firebase_trigger(a,true,"missed");
+    sendMail("Pill Missed now wait for next alarm");
+    lcd.clear();
+    lcd.print("You're late:missed");  
   }
 }
 void connect_wifi()
@@ -292,7 +355,7 @@ void connect_wifi()
   if (WiFi.status() != WL_CONNECTED)
   {
     Serial.print("Failed");
-    // take any action
+//    ESP.restart();
   }
   else
   {
@@ -300,7 +363,7 @@ void connect_wifi()
     Serial.println(WiFi.localIP());
   }
 }
-void sendMail()
+void sendMail(String Msg)
 {
 
   // Enable the debug via Serial port  1 for basic level debugging
@@ -314,6 +377,8 @@ void sendMail()
   session.server.port = SMTP_PORT;
   session.login.email = AUTHOR_EMAIL;
   session.login.password = AUTHOR_PASSWORD;
+
+  
   // Declare the message class 
   SMTP_Message message;
   // Set the message headers 
@@ -322,8 +387,9 @@ void sendMail()
   message.subject = "Pills Reminder";
   message.addRecipient("Ehsan", "rajputjanjua1234@gmail.com");
   //store message that is needed to be send
-  String textMsg = "Do it";
+  String textMsg = Msg;
   message.text.content = textMsg.c_str();
+  
   message.text.charSet = "us-ascii";
   // The content transfer encoding 
   message.text.transfer_encoding = Content_Transfer_Encoding::enc_7bit;
@@ -333,9 +399,10 @@ void sendMail()
   message.response.notify = esp_mail_smtp_notify_success | esp_mail_smtp_notify_failure | esp_mail_smtp_notify_delay;
   // Set the custom message header //
   message.addHeader(F("Message-ID: <test.send@gmail.com>"));
+  
   // Connect to server with the session config //
   if (!smtp.connect(&session))
-    return;]
+    return;
   // Start sending Email and close the session 
   if (!MailClient.sendMail(&smtp, &message))
     Serial.println("Error sending Email, " + smtp.errorReason());
@@ -362,3 +429,19 @@ void smtpCallback(SMTP_Status status)
   }
 }
 
+//reconnect function
+void reconnectwifi()
+{ 
+    unsigned long currentMillisforwifi = millis();
+    // if WiFi is down, try reconnecting
+    if ((WiFi.status() != WL_CONNECTED) && (currentMillisforwifi - previousMillisforwifi >=interval)) {
+    Serial.print(millis());
+    Serial.println("Reconnecting to WiFi...");
+    while(WiFi.disconnect()){
+      Serial.println("Reconnecting...");
+      ESP.restart();
+      delay(1000); 
+    }
+    previousMillisforwifi = currentMillisforwifi;
+    }
+}
